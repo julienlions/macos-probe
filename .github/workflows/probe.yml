@@ -60,6 +60,15 @@ jobs:
           for m in highway lcms libjpeg-turbo libpng zlib; do
             git submodule update --init --depth 1 "third_party/$m"
           done
+          # Seul Linux divergeait, et ARM64 etait d accord avec x86 : la cause
+          # n est donc pas la largeur SIMD mais le compilateur. -ffp-contract=off
+          # interdit la fusion multiplication-addition, que GCC contracte et dont
+          # MSVC ne connait meme pas ce drapeau. ADR-0002 gele deja son oracle
+          # avec cette option : on ne fait que l appliquer partout.
+          EXTRA=()
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            EXTRA+=(-DCMAKE_C_FLAGS=-ffp-contract=off -DCMAKE_CXX_FLAGS=-ffp-contract=off)
+          fi
           cmake -B b -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF -DJPEGLI_ENABLE_TOOLS=ON \
             -DJPEGLI_ENABLE_DOXYGEN=OFF -DJPEGLI_ENABLE_MANPAGES=OFF \
@@ -67,7 +76,8 @@ jobs:
             -DJPEGLI_ENABLE_SJPEG=OFF -DJPEGLI_ENABLE_OPENEXR=OFF \
             -DJPEGLI_ENABLE_SKCMS=OFF -DJPEGLI_ENABLE_TCMALLOC=OFF \
             -DJPEGLI_ENABLE_FUZZERS=OFF -DJPEGLI_ENABLE_DEVTOOLS=OFF \
-            -DJPEGLI_ENABLE_JPEGLI_LIBJPEG=OFF
+            -DJPEGLI_ENABLE_JPEGLI_LIBJPEG=OFF \
+            "${EXTRA[@]}"
           cmake --build b
           # cygpath n'existe que sous Git Bash ; ailleurs $PWD convient deja.
           # Sans lui on exporte /d/a/... que seul Git Bash sait relire.
