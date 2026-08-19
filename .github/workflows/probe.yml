@@ -34,8 +34,18 @@ jobs:
 
       - name: outils (Windows)
         if: startsWith(matrix.os, 'windows')
-        run: choco install nasm ninja -y
         shell: pwsh
+        run: |
+          choco install nasm ninja -y
+          # choco n'ajoute pas NASM au PATH des etapes suivantes. Sans lui,
+          # turbojpeg-sys echoue (il passe REQUIRE_SIMD=ON) -- et il echoue
+          # loin d'ici, dans cargo, ce qui rend la cause illisible.
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      # Verifier MAINTENANT, pas trente lignes plus bas.
+      - name: nasm est-il joignable ?
+        shell: bash
+        run: nasm -v
 
       - uses: ilammy/msvc-dev-cmd@v1
         if: startsWith(matrix.os, 'windows')
