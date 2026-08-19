@@ -105,6 +105,40 @@ unsafe extern "C" {
     fn jpegli_quality_to_distance(quality: i32) -> f32;
 }
 
+/// jpegli decodes in FLOAT and dispatches across AVX2/SSE4/SSE2 at run time.
+/// libjpeg-turbo is fixed point and proven identical on four targets; nothing
+/// says jpegli is. It cannot be the identity decoder unless it is, so the
+/// question gets asked here rather than after the code is written.
+///
+/// Driven through its own `djpegli` tool: reaching the library directly means
+/// declaring `jpeg_decompress_struct`, which is a chantier of its own for an
+/// answer this reaches today.
+fn jpegli_decode_hash(jpeg: &[u8]) -> Option<(usize, u64)> {
+    let tool = std::env::var("DJPEGLI").ok()?;
+    let dir = std::env::temp_dir();
+    let src = dir.join("probe_in.jpg");
+    let dst = dir.join("probe_out.ppm");
+    std::fs::write(&src, jpeg).ok()?;
+    let status = std::process::Command::new(&tool).arg(&src).arg(&dst).status().ok()?;
+    if !status.success() {
+        println!("jpegli-decode  ECHEC de {tool}");
+        return None;
+    }
+    let raw = std::fs::read(&dst).ok()?;
+    // Skip the PNM header: three whitespace-separated fields after the magic.
+    let mut i = 0usize;
+    let mut fields = 0;
+    while fields < 4 && i < raw.len() {
+        while i < raw.len() && raw[i].is_ascii_whitespace() { i += 1 }
+        while i < raw.len() && !raw[i].is_ascii_whitespace() { i += 1 }
+        fields += 1;
+    }
+    let px = &raw[i + 1..];
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&dst);
+    Some((px.len(), fnv1a(px)))
+}
+
 fn main() {
     println!("cible      {}", std::env::consts::ARCH);
     println!("systeme    {}", std::env::consts::OS);
@@ -132,5 +166,11 @@ fn main() {
             "decode     {num}/{denom}  {w}x{h}  fnv {:016x}",
             fnv1a(&px)
         );
+    }
+
+    // 3. Et le decodeur FLOTTANT de jpegli : meme question, autre reponse ?
+    match jpegli_decode_hash(&jpeg) {
+        Some((n, h)) => println!("decode     jpegli  {n} octets  fnv {h:016x}"),
+        None => println!("jpegli-decode  non teste (DJPEGLI absent)"),
     }
 }

@@ -57,28 +57,34 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/google/jpegli.git jpegli
           cd jpegli
-          for m in highway lcms libjpeg-turbo; do
+          for m in highway lcms libjpeg-turbo libpng zlib; do
             git submodule update --init --depth 1 "third_party/$m"
           done
           cmake -B b -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=OFF -DJPEGLI_ENABLE_TOOLS=OFF \
+            -DBUILD_TESTING=OFF -DJPEGLI_ENABLE_TOOLS=ON \
             -DJPEGLI_ENABLE_DOXYGEN=OFF -DJPEGLI_ENABLE_MANPAGES=OFF \
             -DJPEGLI_ENABLE_BENCHMARK=OFF -DJPEGLI_ENABLE_JNI=OFF \
             -DJPEGLI_ENABLE_SJPEG=OFF -DJPEGLI_ENABLE_OPENEXR=OFF \
             -DJPEGLI_ENABLE_SKCMS=OFF -DJPEGLI_ENABLE_TCMALLOC=OFF \
             -DJPEGLI_ENABLE_FUZZERS=OFF -DJPEGLI_ENABLE_DEVTOOLS=OFF \
             -DJPEGLI_ENABLE_JPEGLI_LIBJPEG=OFF
-          cmake --build b --target jpegli-static
+          cmake --build b
           # cygpath n'existe que sous Git Bash ; ailleurs $PWD convient deja.
           # Sans lui on exporte /d/a/... que seul Git Bash sait relire.
           D="$PWD"; command -v cygpath >/dev/null && D="$(cygpath -m "$PWD")"
           echo "JPEGLI_LIB_DIR=$D/b/lib" >> "$GITHUB_ENV"
           echo "HWY_LIB_DIR=$D/b/third_party/highway" >> "$GITHUB_ENV"
+          # Windows nomme ses binaires .exe ; le test le dit plutot que de le supposer.
+          EXE=""; [ -f "b/tools/djpegli.exe" ] && EXE=".exe"
+          echo "DJPEGLI=$D/b/tools/djpegli$EXE" >> "$GITHUB_ENV"
 
       - name: construire et executer la sonde (Unix)
         if: ${{ !startsWith(matrix.os, 'windows') }}
         shell: bash
-        run: cargo run --release | tee "resultat-${{ matrix.nom }}.txt"
+        run: |
+          export LD_LIBRARY_PATH="$(dirname "$DJPEGLI")/../lib:$LD_LIBRARY_PATH"
+          export DYLD_LIBRARY_PATH="$(dirname "$DJPEGLI")/../lib:$DYLD_LIBRARY_PATH"
+          cargo run --release | tee "resultat-${{ matrix.nom }}.txt"
 
       # PAS bash ici. Git pour Windows place son /usr/bin en tete du PATH,
       # et le link.exe qui s y trouve est celui de GNU coreutils, pas celui
@@ -87,7 +93,9 @@ jobs:
       - name: construire et executer la sonde (Windows)
         if: startsWith(matrix.os, 'windows')
         shell: pwsh
-        run: cargo run --release | Tee-Object -FilePath "resultat-${{ matrix.nom }}.txt"
+        run: |
+          $env:PATH = (Split-Path $env:DJPEGLI) + "\..\lib;" + $env:PATH
+          cargo run --release | Tee-Object -FilePath "resultat-${{ matrix.nom }}.txt"
 
       - uses: actions/upload-artifact@v4
         with:
