@@ -69,12 +69,25 @@ jobs:
             -DJPEGLI_ENABLE_FUZZERS=OFF -DJPEGLI_ENABLE_DEVTOOLS=OFF \
             -DJPEGLI_ENABLE_JPEGLI_LIBJPEG=OFF
           cmake --build b --target jpegli-static
-          echo "JPEGLI_LIB_DIR=$PWD/b/lib" >> "$GITHUB_ENV"
-          echo "HWY_LIB_DIR=$PWD/b/third_party/highway" >> "$GITHUB_ENV"
+          # cygpath n'existe que sous Git Bash ; ailleurs $PWD convient deja.
+          # Sans lui on exporte /d/a/... que seul Git Bash sait relire.
+          D="$PWD"; command -v cygpath >/dev/null && D="$(cygpath -m "$PWD")"
+          echo "JPEGLI_LIB_DIR=$D/b/lib" >> "$GITHUB_ENV"
+          echo "HWY_LIB_DIR=$D/b/third_party/highway" >> "$GITHUB_ENV"
 
-      - name: construire et executer la sonde
+      - name: construire et executer la sonde (Unix)
+        if: ${{ !startsWith(matrix.os, 'windows') }}
         shell: bash
         run: cargo run --release | tee "resultat-${{ matrix.nom }}.txt"
+
+      # PAS bash ici. Git pour Windows place son /usr/bin en tete du PATH,
+      # et le link.exe qui s y trouve est celui de GNU coreutils, pas celui
+      # de MSVC. rustc appelle le mauvais, qui repond « extra operand ».
+      # Mesure, pas suppose : le journal du 19/08 le nomme.
+      - name: construire et executer la sonde (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: cargo run --release | Tee-Object -FilePath "resultat-${{ matrix.nom }}.txt"
 
       - uses: actions/upload-artifact@v4
         with:
