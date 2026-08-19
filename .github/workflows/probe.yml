@@ -110,7 +110,10 @@ jobs:
           # Seules les lignes 'decode' comptent : elles portent les empreintes
           # de pixels. Le reste (cible, systeme) differe forcement.
           for f in $(find res -name '*.txt' | sort); do
-            grep '^decode' "$f" > "$f.hash"
+            # tr -d supprime le CR : pwsh ecrit en CRLF sous Windows, et
+            # diff compare des octets. Sans ca, des empreintes IDENTIQUES
+            # sont declarees differentes parce que la ligne finit autrement.
+            tr -d '\r' < "$f" | grep '^decode' > "$f.hash"
           done
           ref=$(find res -name '*.txt.hash' | sort | head -1)
           echo; echo "reference : $ref"; ecart=0
@@ -118,7 +121,13 @@ jobs:
             if diff -q "$ref" "$f" >/dev/null; then
               echo "  IDENTIQUE  $f"
             else
-              echo "  DIFFERENT  $f"; diff "$ref" "$f" || true; ecart=1
+              echo "  DIFFERENT  $f"
+              # Les fins de ligne sont deja normalisees : si ca differe ici,
+              # ce sont les PIXELS. cat -A rend les octets invisibles visibles.
+              diff "$ref" "$f" || true
+              echo "--- octets, reference ---"; cat -A "$ref"
+              echo "--- octets, ce fichier ---"; cat -A "$f"
+              ecart=1
             fi
           done
           echo
