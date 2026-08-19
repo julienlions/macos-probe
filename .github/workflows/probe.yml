@@ -1,0 +1,108 @@
+name: sonde voie C
+
+# Deux questions, et deux seulement :
+#   1. libjpeg-turbo (C) et jpegli (C++) se construisent-ils sur macOS arm64,
+#      macOS Intel, Linux et Windows ?
+#   2. le decodage rend-il les MEMES octets sur toutes ces cibles ?
+# La seconde decide si l'identite d'un asset depend de la machine du client.
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  sonde:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15,        nom: macos-arm64 }
+          - { os: macos-15-intel,  nom: macos-x86_64 }
+          - { os: ubuntu-latest,   nom: linux-x86_64 }
+          - { os: windows-latest,  nom: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: outils (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: brew install nasm cmake ninja
+
+      - name: outils (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get update && sudo apt-get install -y nasm cmake ninja-build
+
+      - name: outils (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: choco install nasm ninja -y
+        shell: pwsh
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: startsWith(matrix.os, 'windows')
+
+      # jpegli n'est pas sur crates.io : on le construit depuis la source,
+      # avec les trois seuls sous-modules dont la bibliotheque a besoin.
+      - name: construire jpegli
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/google/jpegli.git jpegli
+          cd jpegli
+          for m in highway lcms libjpeg-turbo; do
+            git submodule update --init --depth 1 "third_party/$m"
+          done
+          cmake -B b -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF -DJPEGLI_ENABLE_TOOLS=OFF \
+            -DJPEGLI_ENABLE_DOXYGEN=OFF -DJPEGLI_ENABLE_MANPAGES=OFF \
+            -DJPEGLI_ENABLE_BENCHMARK=OFF -DJPEGLI_ENABLE_JNI=OFF \
+            -DJPEGLI_ENABLE_SJPEG=OFF -DJPEGLI_ENABLE_OPENEXR=OFF \
+            -DJPEGLI_ENABLE_SKCMS=OFF -DJPEGLI_ENABLE_TCMALLOC=OFF \
+            -DJPEGLI_ENABLE_FUZZERS=OFF -DJPEGLI_ENABLE_DEVTOOLS=OFF \
+            -DJPEGLI_ENABLE_JPEGLI_LIBJPEG=OFF
+          cmake --build b --target jpegli-static
+          echo "JPEGLI_LIB_DIR=$PWD/b/lib" >> "$GITHUB_ENV"
+          echo "HWY_LIB_DIR=$PWD/b/third_party/highway" >> "$GITHUB_ENV"
+
+      - name: construire et executer la sonde
+        shell: bash
+        run: cargo run --release | tee "resultat-${{ matrix.nom }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resultat-${{ matrix.nom }}
+          path: resultat-${{ matrix.nom }}.txt
+
+  comparer:
+    needs: sonde
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: res }
+      - name: les octets sont-ils les memes partout ?
+        shell: bash
+        run: |
+          find res -name '*.txt' | sort | while read -r f; do
+            echo "=============== $f"; cat "$f"
+          done
+          # Seules les lignes 'decode' comptent : elles portent les empreintes
+          # de pixels. Le reste (cible, systeme) differe forcement.
+          for f in $(find res -name '*.txt' | sort); do
+            grep '^decode' "$f" > "$f.hash"
+          done
+          ref=$(find res -name '*.txt.hash' | sort | head -1)
+          echo; echo "reference : $ref"; ecart=0
+          for f in $(find res -name '*.txt.hash' | sort); do
+            if diff -q "$ref" "$f" >/dev/null; then
+              echo "  IDENTIQUE  $f"
+            else
+              echo "  DIFFERENT  $f"; diff "$ref" "$f" || true; ecart=1
+            fi
+          done
+          echo
+          if [ "$ecart" = 0 ]; then
+            echo "VERDICT : les octets decodes sont identiques sur toutes les cibles."
+          else
+            echo "VERDICT : LES OCTETS DIFFERENT SELON LA MACHINE."
+            echo "L'identite d'un asset dependrait du client. A traiter avant d'ecrire du code."
+            exit 1
+          fi

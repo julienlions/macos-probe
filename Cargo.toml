@@ -1,0 +1,11 @@
+[package]
+name = "sonde-voie-c"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+turbojpeg-sys = "1.2"
+
+[profile.release]
+opt-level = 3
